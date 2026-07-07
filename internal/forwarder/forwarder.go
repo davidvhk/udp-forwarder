@@ -7,7 +7,7 @@ import (
 
 type Forwarder struct {
 	destinations []string
-	mu           sync.Mutex
+	mu           sync.RWMutex
 }
 
 func (f *Forwarder) AddDestination(destination string) {
@@ -17,10 +17,12 @@ func (f *Forwarder) AddDestination(destination string) {
 }
 
 func (f *Forwarder) StartForwarding(conn *net.UDPConn, packet []byte, addr *net.UDPAddr) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.mu.RLock()
+	destinations := make([]string, len(f.destinations))
+	copy(destinations, f.destinations)
+	f.mu.RUnlock()
 
-	for _, destination := range f.destinations {
+	for _, destination := range destinations {
 		destAddr, err := net.ResolveUDPAddr("udp", destination)
 		if err != nil {
 			continue
