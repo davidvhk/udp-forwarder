@@ -38,7 +38,10 @@ func (l *Listener) StartListening(address string, forwarder *forwarder.Forwarder
 			continue
 		}
 
+		packet := make([]byte, n)
+		copy(packet, buffer[:n])
+
 		log.Printf("Received %d bytes from %s", n, remoteAddr.String())
-		go l.Forwarder.StartForwarding(conn, buffer[:n], remoteAddr)
+		go l.Forwarder.StartForwarding(conn, packet, remoteAddr)
 	}
 }
