@@ -29,7 +29,7 @@ func (l *Listener) StartListening(address string, forwarder *forwarder.Forwarder
 
 	log.Printf("Listening for UDP traffic on %s", l.Address)
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 65535)
 
 	for {
 		n, remoteAddr, err := conn.ReadFromUDP(buffer)

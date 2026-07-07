@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=nobody
-Group=nobody
+Group=nogroup
 ExecStart=/usr/local/bin/udp-forwarder -config /etc/udp-forwarder/config.yaml
 Restart=always
 RestartSec=5s
