@@ -13,6 +13,7 @@ import (
 type Config struct {
 	ListenAddress  string   `yaml:"listen_address"`
 	DestinationIPs []string `yaml:"destinations"`
+	Transparent    bool     `yaml:"transparent"`
 }
 
 func loadConfig(filePath string) (*Config, error) {
@@ -48,7 +49,10 @@ func main() {
 	}
 
 	listener := udp.Listener{}
-	forwarder := forwarder.Forwarder{}
+	forwarder := forwarder.Forwarder{
+		Transparent: config.Transparent,
+	}
+	defer forwarder.Close()
 
 	for _, ip := range config.DestinationIPs {
 		forwarder.AddDestination(ip)

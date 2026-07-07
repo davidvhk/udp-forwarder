@@ -1,0 +1,6 @@
+# Binary directory
+bin/
+
+# Package formats
+*.deb
+*.rpm
