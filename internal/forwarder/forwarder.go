@@ -6,23 +6,32 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
 type Forwarder struct {
 	destinations []string
 	Transparent  bool
+	MTU          int
 	mu           sync.RWMutex
 	rawFD        int
 	rawOnce      sync.Once
 	rawErr       error
 }
 
+var ipID uint32
+
 func (f *Forwarder) AddDestination(destination string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.destinations = append(f.destinations, destination)
 }
+
+const (
+	ipMTUDiscover  = 10
+	ipPMTUDiscDont = 0
+)
 
 func (f *Forwarder) initRawSocket() {
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
@@ -35,6 +44,12 @@ func (f *Forwarder) initRawSocket() {
 		syscall.Close(fd)
 		f.rawErr = fmt.Errorf("failed to set IP_HDRINCL: %w", err)
 		return
+	}
+	// Disable PMTUD to prevent EMSGSIZE errors on packets exceeding path MTU
+	// by allowing the kernel to perform IP fragmentation.
+	err = syscall.SetsockoptInt(fd, syscall.IPPROTO_IP, ipMTUDiscover, ipPMTUDiscDont)
+	if err != nil {
+		log.Printf("Warning: failed to set IP_MTU_DISCOVER on raw socket: %v", err)
 	}
 	f.rawFD = fd
 }
@@ -57,6 +72,10 @@ func (f *Forwarder) StartForwarding(conn *net.UDPConn, packet []byte, addr *net.
 	destinations := make([]string, len(f.destinations))
 	copy(destinations, f.destinations)
 	transparent := f.Transparent
+	mtu := f.MTU
+	if mtu <= 0 {
+		mtu = 1500
+	}
 	f.mu.RUnlock()
 
 	useRaw := false
@@ -80,9 +99,10 @@ func (f *Forwarder) StartForwarding(conn *net.UDPConn, packet []byte, addr *net.
 		}
 
 		if useRaw && destAddr.IP.To4() != nil {
-			rawPacket, err := buildIPv4UDPPacket(addr.IP, destAddr.IP, addr.Port, destAddr.Port, packet)
+			id := uint16(atomic.AddUint32(&ipID, 1) & 0xffff)
+			rawPackets, err := buildIPv4UDPFragments(addr.IP, destAddr.IP, addr.Port, destAddr.Port, packet, mtu, id)
 			if err != nil {
-				log.Printf("Error building raw UDP packet: %v. Falling back to standard forwarding.", err)
+				log.Printf("Error building raw UDP packet fragments (src=%s, dst=%s, len=%d, mtu=%d): %v. Falling back to standard forwarding.", addr.IP, destAddr.IP, len(packet), mtu, err)
 				_, _ = conn.WriteToUDP(packet, destAddr)
 				continue
 			}
@@ -92,9 +112,20 @@ func (f *Forwarder) StartForwarding(conn *net.UDPConn, packet []byte, addr *net.
 			}
 			copy(toAddr.Addr[:], destAddr.IP.To4())
 
-			err = syscall.Sendto(fd, rawPacket, 0, toAddr)
-			if err != nil {
-				log.Printf("Error sending raw UDP packet: %v. Falling back to standard forwarding.", err)
+			if len(rawPackets) > 1 {
+				log.Printf("Fragmented packet of %d bytes into %d fragments for transparent forwarding (mtu=%d)", len(packet), len(rawPackets), mtu)
+			}
+
+			sendErr := false
+			for i, frag := range rawPackets {
+				err = syscall.Sendto(fd, frag, 0, toAddr)
+				if err != nil {
+					log.Printf("Error sending raw UDP packet fragment %d/%d (fragLen=%d, totalLen=%d, destination=%s): %v. Falling back to standard forwarding.", i+1, len(rawPackets), len(frag), len(packet), destination, err)
+					sendErr = true
+					break
+				}
+			}
+			if sendErr {
 				_, _ = conn.WriteToUDP(packet, destAddr)
 			}
 		} else {
@@ -107,57 +138,33 @@ func (f *Forwarder) StartForwarding(conn *net.UDPConn, packet []byte, addr *net.
 }
 
 func buildIPv4UDPPacket(srcIP, dstIP net.IP, srcPort, dstPort int, payload []byte) ([]byte, error) {
+	frags, err := buildIPv4UDPFragments(srcIP, dstIP, srcPort, dstPort, payload, 65535, 0)
+	if err != nil {
+		return nil, err
+	}
+	return frags[0], nil
+}
+
+func buildIPv4UDPFragments(srcIP, dstIP net.IP, srcPort, dstPort int, payload []byte, mtu int, id uint16) ([][]byte, error) {
 	srcIP4 := srcIP.To4()
 	dstIP4 := dstIP.To4()
 	if srcIP4 == nil || dstIP4 == nil {
 		return nil, fmt.Errorf("both source and destination must be IPv4")
 	}
 
-	totalLen := 20 + 8 + len(payload)
-	if totalLen > 65535 {
+	// Calculate UDP length and build the full unfragmented UDP datagram (UDP header + payload)
+	// so we can calculate the correct UDP checksum.
+	udpLen := 8 + len(payload)
+	if udpLen > 65535 {
 		return nil, fmt.Errorf("payload too large")
 	}
 
-	packet := make([]byte, totalLen)
-
-	// Version (4) & IHL (5) -> 0x45
-	packet[0] = 0x45
-	// TOS -> 0
-	packet[1] = 0x00
-	// Total Length
-	binary.BigEndian.PutUint16(packet[2:4], uint16(totalLen))
-	// Identification -> 0
-	binary.BigEndian.PutUint16(packet[4:6], 0)
-	// Flags & Fragment Offset (Don't Fragment = 0x4000)
-	binary.BigEndian.PutUint16(packet[6:8], 0x4000)
-	// TTL -> 64
-	packet[8] = 64
-	// Protocol -> 17 (UDP)
-	packet[9] = 17
-	// Header Checksum -> 0 (for now)
-	binary.BigEndian.PutUint16(packet[10:12], 0)
-	// Source IP
-	copy(packet[12:16], srcIP4)
-	// Destination IP
-	copy(packet[16:20], dstIP4)
-
-	// Calculate IP checksum
-	ipChecksum := checksum(packet[0:20])
-	binary.BigEndian.PutUint16(packet[10:12], ipChecksum)
-
-	// 2. UDP Header
-	// Source Port
-	binary.BigEndian.PutUint16(packet[20:22], uint16(srcPort))
-	// Destination Port
-	binary.BigEndian.PutUint16(packet[22:24], uint16(dstPort))
-	// UDP Length
-	udpLen := 8 + len(payload)
-	binary.BigEndian.PutUint16(packet[24:26], uint16(udpLen))
-	// UDP Checksum -> 0 (for now)
-	binary.BigEndian.PutUint16(packet[26:28], 0)
-
-	// Copy payload
-	copy(packet[28:], payload)
+	udpPacket := make([]byte, udpLen)
+	binary.BigEndian.PutUint16(udpPacket[0:2], uint16(srcPort))
+	binary.BigEndian.PutUint16(udpPacket[2:4], uint16(dstPort))
+	binary.BigEndian.PutUint16(udpPacket[4:6], uint16(udpLen))
+	binary.BigEndian.PutUint16(udpPacket[6:8], 0)
+	copy(udpPacket[8:], payload)
 
 	// Calculate UDP checksum using pseudo-header
 	pseudoHeader := make([]byte, 12+udpLen)
@@ -166,15 +173,86 @@ func buildIPv4UDPPacket(srcIP, dstIP net.IP, srcPort, dstPort int, payload []byt
 	pseudoHeader[8] = 0
 	pseudoHeader[9] = 17
 	binary.BigEndian.PutUint16(pseudoHeader[10:12], uint16(udpLen))
-	copy(pseudoHeader[12:], packet[20:])
+	copy(pseudoHeader[12:], udpPacket)
 
 	udpChecksum := checksum(pseudoHeader)
 	if udpChecksum == 0 {
 		udpChecksum = 0xffff
 	}
-	binary.BigEndian.PutUint16(packet[26:28], udpChecksum)
+	binary.BigEndian.PutUint16(udpPacket[6:8], udpChecksum)
 
-	return packet, nil
+	// Determine if we need to fragment
+	totalLen := 20 + udpLen
+	if totalLen <= mtu {
+		// No fragmentation needed
+		packet := make([]byte, totalLen)
+
+		// IP Header
+		packet[0] = 0x45
+		packet[1] = 0x00
+		binary.BigEndian.PutUint16(packet[2:4], uint16(totalLen))
+		binary.BigEndian.PutUint16(packet[4:6], id)
+		binary.BigEndian.PutUint16(packet[6:8], 0x0000) // Clear DF
+		packet[8] = 64
+		packet[9] = 17
+		copy(packet[12:16], srcIP4)
+		copy(packet[16:20], dstIP4)
+
+		ipChecksum := checksum(packet[0:20])
+		binary.BigEndian.PutUint16(packet[10:12], ipChecksum)
+
+		// UDP Header + Payload
+		copy(packet[20:], udpPacket)
+		return [][]byte{packet}, nil
+	}
+
+	// Fragment payload
+	maxFragPayload := (mtu - 20) / 8 * 8
+	if maxFragPayload <= 8 {
+		return nil, fmt.Errorf("MTU %d is too small for raw IP/UDP forwarding", mtu)
+	}
+
+	var fragments [][]byte
+	offsetBytes := 0
+
+	for offsetBytes < udpLen {
+		chunkSize := udpLen - offsetBytes
+		if chunkSize > maxFragPayload {
+			chunkSize = maxFragPayload
+		}
+
+		fragTotalLen := 20 + chunkSize
+		packet := make([]byte, fragTotalLen)
+
+		// IP Header
+		packet[0] = 0x45
+		packet[1] = 0x00
+		binary.BigEndian.PutUint16(packet[2:4], uint16(fragTotalLen))
+		binary.BigEndian.PutUint16(packet[4:6], id)
+
+		// Flags & Fragment Offset
+		var flagsAndOffset uint16 = uint16(offsetBytes / 8)
+		if offsetBytes+chunkSize < udpLen {
+			flagsAndOffset |= 0x2000 // MF (More Fragments) flag
+		}
+		binary.BigEndian.PutUint16(packet[6:8], flagsAndOffset)
+
+		packet[8] = 64
+		packet[9] = 17
+		copy(packet[12:16], srcIP4)
+		copy(packet[16:20], dstIP4)
+
+		ipChecksum := checksum(packet[0:20])
+		binary.BigEndian.PutUint16(packet[10:12], ipChecksum)
+
+		// Payload chunk
+		copy(packet[20:], udpPacket[offsetBytes:offsetBytes+chunkSize])
+
+		fragments = append(fragments, packet)
+		offsetBytes += chunkSize
+	}
+
+	return fragments, nil
 }
 
 func checksum(data []byte) uint16 {

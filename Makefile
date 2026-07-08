@@ -77,7 +77,7 @@ deb: build
 	@install -m 644 config/config.yaml $(DEB_DIR)/etc/udp-forwarder/config.yaml
 	@install -m 644 $(BINARY_NAME).service $(DEB_DIR)/lib/systemd/system/$(BINARY_NAME).service
 	@echo "Package: $(BINARY_NAME)" > $(DEB_DIR)/DEBIAN/control
-	@echo "Version: 1.0.0" >> $(DEB_DIR)/DEBIAN/control
+	@echo "Version: 1.0.3" >> $(DEB_DIR)/DEBIAN/control
 	@echo "Section: utils" >> $(DEB_DIR)/DEBIAN/control
 	@echo "Priority: optional" >> $(DEB_DIR)/DEBIAN/control
 	@echo "Architecture: $(DEB_ARCH)" >> $(DEB_DIR)/DEBIAN/control
@@ -85,7 +85,7 @@ deb: build
 	@echo "Description: A UDP traffic forwarder" >> $(DEB_DIR)/DEBIAN/control
 	@echo " This project is a UDP traffic forwarder that listens for incoming UDP packets and forwards them to specified destinations based on a configuration file." >> $(DEB_DIR)/DEBIAN/control
 	@echo "/etc/udp-forwarder/config.yaml" > $(DEB_DIR)/DEBIAN/conffiles
-	dpkg-deb --build $(DEB_DIR) $(BINARY_NAME)_1.0.0_$(DEB_ARCH).deb
+	dpkg-deb --build $(DEB_DIR) $(BINARY_NAME)_1.0.3_$(DEB_ARCH).deb
 	@rm -rf $(DEB_DIR)
 	@echo "DEB package built successfully."
 

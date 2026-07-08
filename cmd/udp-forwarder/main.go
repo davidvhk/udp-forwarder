@@ -14,6 +14,7 @@ type Config struct {
 	ListenAddress  string   `yaml:"listen_address"`
 	DestinationIPs []string `yaml:"destinations"`
 	Transparent    bool     `yaml:"transparent"`
+	MTU            int      `yaml:"mtu"`
 }
 
 func loadConfig(filePath string) (*Config, error) {
@@ -48,9 +49,17 @@ func main() {
 		log.Fatal("Error: no destinations are specified in config")
 	}
 
+	mtu := config.MTU
+	if mtu <= 0 {
+		mtu = 1500
+	}
+
+	log.Printf("Starting forwarder: transparent=%v, mtu=%d", config.Transparent, mtu)
+
 	listener := udp.Listener{}
 	forwarder := forwarder.Forwarder{
 		Transparent: config.Transparent,
+		MTU:         mtu,
 	}
 	defer forwarder.Close()
 

@@ -129,6 +129,11 @@ func TestForwarder_BuildIPv4UDPPacket(t *testing.T) {
 		t.Errorf("IP header checksum is invalid: got %04x, expected 0", cs)
 	}
 
+	// Verify Flags & Fragment Offset is 0 (DF disabled)
+	if flagsAndOffset := binary.BigEndian.Uint16(packet[6:8]); flagsAndOffset != 0 {
+		t.Errorf("Expected flags and fragment offset to be 0, got 0x%04x", flagsAndOffset)
+	}
+
 	// Verify UDP Pseudo-Header Checksum
 	// Construct the pseudo header
 	udpLen := 8 + len(payload)
@@ -142,5 +147,68 @@ func TestForwarder_BuildIPv4UDPPacket(t *testing.T) {
 
 	if cs := checksum(pseudoHeader); cs != 0 {
 		t.Errorf("UDP checksum is invalid: got %04x, expected 0", cs)
+	}
+}
+
+func TestForwarder_BuildIPv4UDPFragments(t *testing.T) {
+	srcIP := net.ParseIP("192.168.1.50")
+	dstIP := net.ParseIP("10.0.0.1")
+	srcPort := 12345
+	dstPort := 54321
+
+	// Create a payload that will require fragmentation when MTU is small
+	payload := make([]byte, 1400)
+	for i := range payload {
+		payload[i] = byte(i % 256)
+	}
+
+	mtu := 1000
+	id := uint16(42)
+
+	fragments, err := buildIPv4UDPFragments(srcIP, dstIP, srcPort, dstPort, payload, mtu, id)
+	if err != nil {
+		t.Fatalf("Failed to build IPv4 UDP fragments: %v", err)
+	}
+
+	// For MTU 1000, maxFragPayload is (1000 - 20) / 8 * 8 = 980 / 8 * 8 = 122 * 8 = 976 bytes.
+	// Total payload to send (UDP header + payload) = 8 + 1400 = 1408 bytes.
+	// Fragment 0: 976 bytes of payload (8 bytes UDP header + 968 bytes UDP payload).
+	// Fragment 1: 1408 - 976 = 432 bytes of payload (432 bytes UDP payload).
+	if len(fragments) != 2 {
+		t.Fatalf("Expected 2 fragments, got %d", len(fragments))
+	}
+
+	// Verify Fragment 0
+	frag0 := fragments[0]
+	if len(frag0) != 20+976 {
+		t.Errorf("Expected fragment 0 length %d, got %d", 20+976, len(frag0))
+	}
+	// Verify MF flag is set (bit 13 of flags is 1 => flag value 0x2000)
+	flagsAndOffset0 := binary.BigEndian.Uint16(frag0[6:8])
+	if flagsAndOffset0&0x2000 == 0 {
+		t.Error("Expected MF flag to be set in fragment 0")
+	}
+	if flagsAndOffset0&0x1FFF != 0 {
+		t.Errorf("Expected offset 0 in fragment 0, got %d", flagsAndOffset0&0x1FFF)
+	}
+	// Verify ID is 42
+	if binary.BigEndian.Uint16(frag0[4:6]) != id {
+		t.Errorf("Expected ID %d, got %d", id, binary.BigEndian.Uint16(frag0[4:6]))
+	}
+
+	// Verify Fragment 1
+	frag1 := fragments[1]
+	if len(frag1) != 20+432 {
+		t.Errorf("Expected fragment 1 length %d, got %d", 20+432, len(frag1))
+	}
+	flagsAndOffset1 := binary.BigEndian.Uint16(frag1[6:8])
+	if flagsAndOffset1&0x2000 != 0 {
+		t.Error("Expected MF flag to be cleared in fragment 1")
+	}
+	if flagsAndOffset1&0x1FFF != 976/8 {
+		t.Errorf("Expected offset %d in fragment 1, got %d", 976/8, flagsAndOffset1&0x1FFF)
+	}
+	if binary.BigEndian.Uint16(frag1[4:6]) != id {
+		t.Errorf("Expected ID %d, got %d", id, binary.BigEndian.Uint16(frag1[4:6]))
 	}
 }

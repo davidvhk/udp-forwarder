@@ -10,9 +10,9 @@ ExecStart=/usr/local/bin/udp-forwarder -config /etc/udp-forwarder/config.yaml
 Restart=always
 RestartSec=5s
 
-# Allow binding to privileged ports (<1024) even when running as nobody
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# Allow binding to privileged ports (<1024) and raw sockets (for transparent forwarding) even when running as nobody
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
 NoNewPrivileges=true
 
 LimitNOFILE=65536
