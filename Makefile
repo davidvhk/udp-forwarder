@@ -1,4 +1,4 @@
-.PHONY: all build static run clean test install install-service uninstall rpm rpm-static deb help
+.PHONY: all build static run clean test lint install install-service uninstall rpm rpm-static deb help
 
 BINARY_NAME=udp-forwarder
 BUILD_DIR=bin
@@ -8,6 +8,8 @@ CONFIG_DIR=/etc/udp-forwarder
 RPMBUILD_DIR=$(PWD)/rpmbuild
 DEB_DIR=$(PWD)/debbuild
 DEB_ARCH=$(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/' -e 's/armv7l/armhf/')
+VERSION?=$(shell cat VERSION 2>/dev/null || echo "1.0.3")
+RELEASE?=1
 
 all: build
 
@@ -17,6 +19,7 @@ help:
 	@echo "  make static            - Compile a statically linked Go binary to bin/udp-forwarder"
 	@echo "  make run               - Build and run the application locally"
 	@echo "  make test              - Run tests"
+	@echo "  make lint              - Run go vet and golangci-lint"
 	@echo "  make clean             - Clean up build directories, RPMs, and DEBs"
 	@echo "  make rpm               - Build an RPM package (requires rpmbuild)"
 	@echo "  make rpm-static        - Build an RPM package with a statically linked binary"
@@ -45,12 +48,24 @@ clean:
 test:
 	go test ./...
 
+lint:
+	go vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	elif [ -f $$(go env GOPATH)/bin/golangci-lint ]; then \
+		$$(go env GOPATH)/bin/golangci-lint run ./...; \
+	else \
+		echo "golangci-lint is not installed. Run 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest'"; \
+	fi
+
 rpm: build
 	@echo "Building RPM package..."
 	@mkdir -p $(RPMBUILD_DIR)/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 	rpmbuild -bb \
 		--define "_topdir $(RPMBUILD_DIR)" \
 		--define "_sourcedir $(PWD)" \
+		--define "_version $(VERSION)" \
+		--define "_release $(RELEASE)" \
 		udp-forwarder.spec
 	@mv $(RPMBUILD_DIR)/RPMS/*/*.rpm .
 	@rm -rf $(RPMBUILD_DIR)
@@ -62,6 +77,8 @@ rpm-static: static
 	rpmbuild -bb \
 		--define "_topdir $(RPMBUILD_DIR)" \
 		--define "_sourcedir $(PWD)" \
+		--define "_version $(VERSION)" \
+		--define "_release $(RELEASE)" \
 		udp-forwarder.spec
 	@mv $(RPMBUILD_DIR)/RPMS/*/*.rpm .
 	@rm -rf $(RPMBUILD_DIR)
@@ -77,7 +94,7 @@ deb: build
 	@install -m 644 config/config.yaml $(DEB_DIR)/etc/udp-forwarder/config.yaml
 	@install -m 644 $(BINARY_NAME).service $(DEB_DIR)/lib/systemd/system/$(BINARY_NAME).service
 	@echo "Package: $(BINARY_NAME)" > $(DEB_DIR)/DEBIAN/control
-	@echo "Version: 1.0.3" >> $(DEB_DIR)/DEBIAN/control
+	@echo "Version: $(VERSION)" >> $(DEB_DIR)/DEBIAN/control
 	@echo "Section: utils" >> $(DEB_DIR)/DEBIAN/control
 	@echo "Priority: optional" >> $(DEB_DIR)/DEBIAN/control
 	@echo "Architecture: $(DEB_ARCH)" >> $(DEB_DIR)/DEBIAN/control
@@ -85,7 +102,7 @@ deb: build
 	@echo "Description: A UDP traffic forwarder" >> $(DEB_DIR)/DEBIAN/control
 	@echo " This project is a UDP traffic forwarder that listens for incoming UDP packets and forwards them to specified destinations based on a configuration file." >> $(DEB_DIR)/DEBIAN/control
 	@echo "/etc/udp-forwarder/config.yaml" > $(DEB_DIR)/DEBIAN/conffiles
-	dpkg-deb --build $(DEB_DIR) $(BINARY_NAME)_1.0.3_$(DEB_ARCH).deb
+	dpkg-deb --build $(DEB_DIR) $(BINARY_NAME)_$(VERSION)_$(DEB_ARCH).deb
 	@rm -rf $(DEB_DIR)
 	@echo "DEB package built successfully."
 

@@ -1,8 +1,8 @@
 %global debug_package %{nil}
 
 Name:           udp-forwarder
-Version:        0.0.2
-Release:        1%{?dist}
+Version:        %{?_version}%{!?_version:1.0.0}
+Release:        %{?_release}%{!?_release:1}%{?dist}
 Summary:        A UDP traffic forwarder
 License:        MIT
 URL:            https://github.com/davidvhk/udp-forwarder
@@ -30,3 +30,7 @@ install -p -m 644 %{_sourcedir}/udp-forwarder.service %{buildroot}/usr/lib/syste
 /usr/local/bin/udp-forwarder
 /usr/lib/systemd/system/udp-forwarder.service
 %config(noreplace) /etc/udp-forwarder/config.yaml
+
+%changelog
+* Wed Aug 19 2026 David Vanhoucke <vanhouckedavid@gmail.com> - 1.0.0-1
+- Add RPM and DEB release workflow and Go linter

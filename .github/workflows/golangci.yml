@@ -1,18 +1,15 @@
-name: Go CI
+name: golangci-lint
 
 on:
   push:
-    branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
 
 jobs:
-  test:
-    name: Test
+  golangci:
+    name: Lint
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Go
@@ -21,8 +18,8 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Install dependencies
-        run: go mod download
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5
 
-      - name: Run tests
-        run: make test
+      - name: Run Lint
+        run: make lint

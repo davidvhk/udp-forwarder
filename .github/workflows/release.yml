@@ -1,0 +1,58 @@
+name: Release Packages (RPM and DEB)
+
+on:
+  push:
+    branches:
+      - 'master'
+      - 'main'
+
+jobs:
+  release:
+    name: Build Packages and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Version
+        id: get_version
+        run: |
+          TAG=$(cat ./VERSION | tr -d '\r\n')
+          echo "TAG=$TAG" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Build DEB package
+        run: make deb VERSION=${{ env.TAG }}
+
+      - name: Build RPM package
+        run: make rpm VERSION=${{ env.TAG }}
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
+        with:
+          files: |
+            *.rpm
+            *.deb
+          tag_name: ${{ env.TAG }}
+          name: Release ${{ env.TAG }}
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
