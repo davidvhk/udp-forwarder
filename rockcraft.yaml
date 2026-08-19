@@ -1,0 +1,45 @@
+name: udp-forwarder
+title: UDP Forwarder
+version: "1.0.0"
+summary: "High-performance UDP traffic forwarder"
+description: |
+  UDP traffic forwarder that listens for incoming UDP packets and forwards
+  them to specified destinations based on a configuration file.
+
+base: bare
+build-base: ubuntu@24.04
+platforms:
+  amd64:
+
+parts:
+  app:
+    plugin: go
+    source: .
+    build-snaps:
+      - go/1.23/stable
+    build-packages:
+      - gcc
+      - libc6-dev
+    stage-packages:
+      - base-files_base
+      - libc6_libs
+      - libgcc-s1_libs
+    override-build: |
+      go mod tidy
+      VERSION=$(cat VERSION 2>/dev/null || echo "1.0.0")
+      CGO_ENABLED=0 GOOS=linux go build \
+        -ldflags="-s -w" \
+        -o "${CRAFT_PART_INSTALL}/usr/bin/udp-forwarder" ./cmd/udp-forwarder/main.go
+
+      # Directories
+      mkdir -p "${CRAFT_PART_INSTALL}/etc/udp-forwarder"
+
+      # Configuration
+      cp config/config.yaml "${CRAFT_PART_INSTALL}/etc/udp-forwarder/config.yaml"
+
+services:
+  udp-forwarder:
+    override: replace
+    summary: "udp-forwarder daemon service"
+    command: "/usr/bin/udp-forwarder -config /etc/udp-forwarder/config.yaml"
+    startup: enabled
