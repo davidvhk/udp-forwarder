@@ -1,4 +1,4 @@
-.PHONY: all build static run clean test lint install install-service uninstall rpm rpm-static deb help
+.PHONY: all build static run clean test lint install install-service uninstall rpm rpm-static deb rock rock-clean help
 
 BINARY_NAME=udp-forwarder
 BUILD_DIR=bin
@@ -24,6 +24,8 @@ help:
 	@echo "  make rpm               - Build an RPM package (requires rpmbuild)"
 	@echo "  make rpm-static        - Build an RPM package with a statically linked binary"
 	@echo "  make deb               - Build a DEB package (requires dpkg-deb)"
+	@echo "  make rock              - Build OCI container image (ROCK) using rockcraft"
+	@echo "  make rock-clean        - Clean rockcraft build artifacts"
 	@echo "  make install           - Install binary and configuration files to system (requires sudo/root)"
 	@echo "  make install-service   - Install and reload systemd service (requires sudo/root)"
 	@echo "  make uninstall         - Remove binary, configuration, and systemd service (requires sudo/root)"
@@ -43,7 +45,7 @@ run: build
 
 clean:
 	@echo "Cleaning up..."
-	rm -rf $(BUILD_DIR) $(RPMBUILD_DIR) $(DEB_DIR) *.rpm *.deb
+	rm -rf $(BUILD_DIR) $(RPMBUILD_DIR) $(DEB_DIR) *.rpm *.deb *.rock
 
 test:
 	go test ./...
@@ -105,6 +107,12 @@ deb: build
 	dpkg-deb --build $(DEB_DIR) $(BINARY_NAME)_$(VERSION)_$(DEB_ARCH).deb
 	@rm -rf $(DEB_DIR)
 	@echo "DEB package built successfully."
+
+rock:
+	rockcraft pack
+
+rock-clean:
+	rockcraft clean
 
 install: build
 	@echo "Installing binary to $(INSTALL_DIR)..."

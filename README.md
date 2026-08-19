@@ -74,6 +74,64 @@ To resolve this:
    go run cmd/udp-forwarder/main.go
    ```
 
+## Building a Canonical ROCK (Rockcraft / Bare Base)
+
+For ultra-minimal, distroless OCI container deployments with minimal attack surface, **udp-forwarder** supports building as a Canonical **ROCK** image using Rockcraft.
+
+### Why a `bare` Base ROCK?
+- **Distroless & Minimal Overhead**: Built on `base: bare` with `build-base: ubuntu@24.04`, containing strictly the compiled Go binary, configuration files, minimal dynamic C runtime libraries (`libc`), and Pebble service manager.
+- **Enhanced Security**: No package managers (apt/dpkg), shells, or extraneous binaries that could be leveraged by attackers.
+- **Pebble Service Management**: Managed by Canonical's lightweight Pebble init process for process lifecycle and health supervision.
+
+### Prerequisites
+Install Rockcraft and LXD on Ubuntu:
+```bash
+sudo snap install rockcraft --classic
+sudo snap install lxd
+sudo lxd init --auto
+```
+
+### Build the ROCK Container Image
+```bash
+# Build the .rock artifact in an isolated LXD container
+make rock
+# or: rockcraft pack
+```
+This produces the OCI image archive: `udp-forwarder_1.0.0_amd64.rock`.
+
+### Load and Run with Docker / Podman
+Import the `.rock` file directly into your local Docker daemon:
+```bash
+# Using skopeo (available via rockcraft snap or host)
+rockcraft.skopeo --insecure-policy copy \
+  oci-archive:udp-forwarder_1.0.0_amd64.rock \
+  docker-daemon:udp-forwarder:1.0.0
+
+# Run in Standard Forwarding Mode
+docker run -d \
+  --name udp-forwarder \
+  --restart unless-stopped \
+  -p 6343:6343/udp \
+  -v /path/to/config.yaml:/etc/udp-forwarder/config.yaml:ro \
+  udp-forwarder:1.0.0
+
+# Run in Transparent Forwarding Mode (requires host networking or NET_RAW capability)
+docker run -d \
+  --name udp-forwarder \
+  --restart unless-stopped \
+  --net=host \
+  --cap-add=NET_RAW \
+  --cap-add=NET_BIND_SERVICE \
+  -v /path/to/config.yaml:/etc/udp-forwarder/config.yaml:ro \
+  udp-forwarder:1.0.0
+```
+
+### Clean Build Cache
+```bash
+make rock-clean
+# or: rockcraft clean
+```
+
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for more details.

@@ -4,6 +4,7 @@ bin/
 # Package formats
 *.deb
 *.rpm
+*.rock
 
 # Build directories
 rpmbuild/
