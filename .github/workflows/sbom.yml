@@ -1,0 +1,39 @@
+name: Generate SBOM
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+
+      - name: Generate SBOM
+        run: |
+          VERSION=$(cat ./VERSION 2>/dev/null || echo "latest")
+          syft scan dir:. --source-name udp-forwarder --source-version "$VERSION" -o spdx-json=udp-forwarder-sbom.spdx.json
+
+      - name: Scan SBOM with Trivy
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: sbom
+          image-ref: udp-forwarder-sbom.spdx.json
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload SBOM artifact
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: udp-forwarder-sbom-spdx
+          path: udp-forwarder-sbom.spdx.json

@@ -9,3 +9,7 @@ bin/
 # Build directories
 rpmbuild/
 debbuild/
+.secrets
+
+# Generated files
+*.spdx.json
